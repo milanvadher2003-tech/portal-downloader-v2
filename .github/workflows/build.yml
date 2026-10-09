@@ -1,0 +1,55 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install Playwright Chromium
+      run: |
+        playwright install chromium
+
+    - name: Set PLAYWRIGHT_BROWSERS_PATH
+      run: |
+        echo "PLAYWRIGHT_BROWSERS_PATH=$env:LOCALAPPDATA\ms-playwright" >> $env:GITHUB_ENV
+      shell: pwsh
+
+    - name: Build EXE with PyInstaller
+      run: |
+        pyinstaller --onefile `
+          --name "PortalDownloader" `
+          --collect-all playwright `
+          --hidden-import playwright `
+          --hidden-import playwright.sync_api `
+          --add-data "$env:LOCALAPPDATA\ms-playwright;playwright_browsers" `
+          --runtime-hook=rthook.py `
+          portal_downloader.py
+
+    - name: Check EXE size
+      run: |
+        Get-Item dist\PortalDownloader.exe | Select-Object Name, Length
+
+    - name: Upload EXE as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: PortalDownloader-Windows
+        path: dist/PortalDownloader.exe
+        retention-days: 30
