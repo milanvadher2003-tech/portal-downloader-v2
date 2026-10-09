@@ -1,12 +1,14 @@
 """
-Portal Auto Data Downloader - Headless Version
-PC lock hone par bhi chalti hai
-Kal ka data, 10 units, automatic download
+Portal Auto Data Downloader - Interactive Version
+- Y dabao: kal ka data (normal)
+- N dabao: manual date range
+Headless mode - PC lock hone par bhi chalti hai
 """
 
 import os
 import sys
 import time
+import re
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -19,8 +21,7 @@ PASSWORD = "JCB@2889"
 PORTAL_URL = "http://10.0.1.14/portal/index.php"
 DOWNLOAD_FOLDER = r"C:\PortalData"
 
-# Headless: True = PC lock hone par bhi chalega, screen nahi dikhega
-#           False = screen par dikhega (debugging ke liye)
+# Headless: True = PC lock hone par bhi chalega
 HEADLESS = True
 
 UNITS = [
@@ -38,17 +39,15 @@ UNITS = [
 # ==================================
 
 
-# Global log file handle
 LOG_FILE = None
 
 
 def init_log():
-    """Log file initialize karo"""
     global LOG_FILE
     try:
         log_dir = Path(DOWNLOAD_FOLDER) / "_logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"run_{datetime.now().strftime('%Y-%m-%d')}.log"
+        log_path = log_dir / f"run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log"
         LOG_FILE = open(log_path, "a", encoding="utf-8")
     except Exception as e:
         print(f"Log file nahi ban payi: {e}")
@@ -56,14 +55,9 @@ def init_log():
 
 
 def log(msg, level="INFO"):
-    """Console + log file me likho"""
     timestamp = datetime.now().strftime("%H:%M:%S")
     line = f"[{timestamp}] [{level}] {msg}"
-    
-    # Console par print karo
     print(line, flush=True)
-    
-    # Log file me likho
     if LOG_FILE:
         try:
             LOG_FILE.write(line + "\n")
@@ -72,27 +66,151 @@ def log(msg, level="INFO"):
             pass
 
 
-def get_yesterday_dates():
-    """Kal ki date — DD/MM/YYYY format"""
-    yesterday = datetime.now() - timedelta(days=1)
-    date_str = yesterday.strftime("%d/%m/%Y")
-    return date_str, date_str
+def validate_date(date_str):
+    """
+    Date format check karo: DD-MM-YYYY
+    Return: (True, datetime) ya (False, error_msg)
+    """
+    date_str = date_str.strip()
+    
+    # Format check: DD-MM-YYYY
+    pattern = r'^(\d{1,2})-(\d{1,2})-(\d{4})$'
+    match = re.match(pattern, date_str)
+    
+    if not match:
+        return False, "Format galat hai. DD-MM-YYYY use karo (jaise 01-02-2026)"
+    
+    day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    
+    try:
+        d = datetime(year, month, day)
+    except ValueError:
+        return False, f"Ye date valid nahi hai: {date_str}"
+    
+    # Future date check
+    if d.date() > datetime.now().date():
+        return False, "Future date nahi de sakte"
+    
+    return True, d
 
 
-def download_units():
+def ask_user_choice():
+    """
+    User se poochho: kal ka data ya range
+    Return: (from_date_str, to_date_str) DD/MM/YYYY format me
+    """
+    
+    print()
+    print("=" * 60)
+    print("  PORTAL DOWNLOADER - KYA DOWNLOAD KARNA HAI?")
+    print("=" * 60)
+    print()
+    print("  [Y] Kal ka data (default - 1 din)")
+    print("  [N] Manual date range")
+    print()
+    
+    while True:
+        choice = input("  Aapka choice (Y/N): ").strip().upper()
+        
+        if choice in ("Y", "YES", ""):
+            # Kal ka data
+            yesterday = datetime.now() - timedelta(days=1)
+            date_str = yesterday.strftime("%d/%m/%Y")
+            print()
+            print(f"  ✅ Kal ka data select kiya: {date_str}")
+            print()
+            return date_str, date_str
+        
+        elif choice in ("N", "NO"):
+            # Manual range
+            print()
+            print("=" * 60)
+            print("  MANUAL DATE RANGE")
+            print("=" * 60)
+            print()
+            print("  ⚠️  FORMAT DHYAN SE PADHO:")
+            print()
+            print("      DD-MM-YYYY")
+            print()
+            print("      Example:")
+            print("        01-02-2026   (1 February 2026)")
+            print("        15-10-2026   (15 October 2026)")
+            print()
+            print("=" * 60)
+            print()
+            
+            # From date
+            while True:
+                from_input = input("  From Date (DD-MM-YYYY): ").strip()
+                valid, result = validate_date(from_input)
+                if valid:
+                    from_dt = result
+                    break
+                else:
+                    print(f"  ❌ {result}")
+                    print()
+            
+            # To date
+            while True:
+                to_input = input("  To Date   (DD-MM-YYYY): ").strip()
+                valid, result = validate_date(to_input)
+                if valid:
+                    to_dt = result
+                    break
+                else:
+                    print(f"  ❌ {result}")
+                    print()
+            
+            # Check: from <= to
+            if from_dt > to_dt:
+                print()
+                print("  ❌ From date, To date se badi nahi ho sakti!")
+                print("  Dobara try karo.")
+                print()
+                continue
+            
+            # Convert to DD/MM/YYYY (portal format)
+            from_str = from_dt.strftime("%d/%m/%Y")
+            to_str = to_dt.strftime("%d/%m/%Y")
+            
+            days_diff = (to_dt - from_dt).days + 1
+            
+            print()
+            print("=" * 60)
+            print(f"  ✅ Range confirm:")
+            print(f"     From: {from_str}")
+            print(f"     To  : {to_str}")
+            print(f"     Total: {days_diff} din")
+            print("=" * 60)
+            print()
+            
+            # Final confirm
+            confirm = input("  Confirm? (Y/N): ").strip().upper()
+            if confirm in ("Y", "YES", ""):
+                return from_str, to_str
+            else:
+                print()
+                print("  Dobara try karo...")
+                print()
+                continue
+        
+        else:
+            print("  ❌ Sirf Y ya N likho")
+            print()
+
+
+def download_units(from_date, to_date):
     """Main automation function"""
 
     init_log()
-    from_date, to_date = get_yesterday_dates()
 
-    # Folders banao
     Path(DOWNLOAD_FOLDER).mkdir(parents=True, exist_ok=True)
     today_folder = os.path.join(DOWNLOAD_FOLDER, datetime.now().strftime("%Y-%m-%d"))
     Path(today_folder).mkdir(parents=True, exist_ok=True)
 
     log("=" * 60)
-    log("PORTAL AUTO DOWNLOADER - HEADLESS")
-    log(f"Data Date (Kal) : {from_date}")
+    log("PORTAL AUTO DOWNLOADER - INTERACTIVE")
+    log(f"Data Range      : {from_date} se {to_date}")
     log(f"Save Folder     : {today_folder}")
     log(f"Username        : {USERNAME}")
     log(f"Total Units     : {len(UNITS)}")
@@ -116,8 +234,7 @@ def download_units():
             )
             log("      Browser launched OK")
         except Exception as e:
-            log(f"Browser launch fail: {e}")
-            log("Chromium browser missing ho sakta hai!")
+            log(f"Browser launch fail: {e}", "ERROR")
             return
 
         try:
@@ -130,15 +247,14 @@ def download_units():
             page = context.new_page()
             page.set_default_timeout(30000)
 
-            # ---------- STEP 1: Portal kholo ----------
+            # STEP 1: Portal kholo
             log(f"[2/6] Portal khol raha hu: {PORTAL_URL}")
             page.goto(PORTAL_URL, timeout=30000)
             page.wait_for_load_state("networkidle")
             time.sleep(1)
 
-            # ---------- STEP 2: Login ----------
+            # STEP 2: Login
             log("[3/6] Login kar raha hu...")
-
             page.fill("#j_username", USERNAME)
             time.sleep(0.3)
             page.fill("input[name='j_password']", PASSWORD)
@@ -156,9 +272,8 @@ def download_units():
 
             log("      Login OK")
 
-            # ---------- STEP 3: Dashboard link ----------
+            # STEP 3: Dashboard link
             log("[4/6] NMI Dashboard link dhundh raha hu...")
-
             dashboard_url = None
             links = page.query_selector_all("a")
             for link in links:
@@ -174,7 +289,6 @@ def download_units():
                 log("NMI Dashboard link nahi mila!", "ERROR")
                 return
 
-            # Relative URL ko absolute banao
             if dashboard_url.startswith("../"):
                 dashboard_url = "http://10.0.1.14/portal/" + dashboard_url[3:]
             elif dashboard_url.startswith("/"):
@@ -182,7 +296,7 @@ def download_units():
 
             log(f"      Dashboard URL: {dashboard_url}")
 
-            # ---------- STEP 4: Dashboard kholo ----------
+            # STEP 4: Dashboard kholo
             log("[5/6] Dashboard khol raha hu...")
             page.goto(dashboard_url, timeout=30000)
             page.wait_for_load_state("networkidle")
@@ -193,8 +307,9 @@ def download_units():
             else:
                 log("      Dashboard ready hai")
 
-            # ---------- STEP 5: Har unit ka data ----------
+            # STEP 5: Har unit ka data
             log(f"[6/6] {len(UNITS)} units ka data download kar raha hu...")
+            log(f"      Date Range: {from_date} to {to_date}")
 
             success_count = 0
             failed_units = []
@@ -238,7 +353,7 @@ def download_units():
                     page.wait_for_load_state("networkidle", timeout=20000)
                     time.sleep(3)
 
-                    # Export — download handle karo
+                    # Export
                     log(f"      Export...")
                     with page.expect_download(timeout=30000) as download_info:
                         page.click("#export")
@@ -254,7 +369,6 @@ def download_units():
 
                     success_count += 1
 
-                    # Agli unit ke liye dashboard reload
                     if idx < len(UNITS):
                         page.goto(dashboard_url, timeout=30000)
                         page.wait_for_load_state("networkidle")
@@ -282,7 +396,7 @@ def download_units():
                         pass
                     continue
 
-            # ---------- SUMMARY ----------
+            # SUMMARY
             log("=" * 60)
             log(f"KAAM PURA HUA!", "OK")
             log(f"Success: {success_count}/{len(UNITS)}", "OK")
@@ -307,21 +421,26 @@ def download_units():
 
 if __name__ == "__main__":
     try:
-        download_units()
+        # User se poochho
+        from_date, to_date = ask_user_choice()
+        
+        # Download karo
+        download_units(from_date, to_date)
+        
     except KeyboardInterrupt:
-        log("User ne cancel kiya")
+        print("\n\nUser ne cancel kiya.")
     except Exception as e:
-        log(f"FATAL ERROR: {e}", "ERROR")
-        log(traceback.format_exc(), "ERROR")
+        print(f"\n\nFATAL ERROR: {e}")
+        traceback.print_exc()
 
-    # Log file close karo
+    # Log close
     if LOG_FILE:
         try:
             LOG_FILE.close()
         except:
             pass
 
-    # Console window band na ho jaye
+    # Window band na ho
     try:
         if sys.stdout.isatty():
             input("\nBand karne ke liye Enter dabao...")
